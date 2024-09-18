@@ -123,12 +123,19 @@ This script predicts the relaxed structure using record atoms_id in test.csv. No
 
 ## Citation
 If you find the DeepRelax model beneficial for your research, please include a citation to our paper. You can reference it as follows:<br>
-@article{yang2024scaling,<br>
-      &emsp; title={Scaling Crystal Structure Relaxation with a Universal Trustworthy Deep Generative Model},<br> 
-      &emsp; author={Ziduo Yang and Yiming Zhao and Xiaoqing Liu and Xiuying Zhang and Yifan Li and Qiujie Lyu and Calvin Yu-Chian Chen and Lei Shen},<br>
-      &emsp; journal={arXiv preprint arXiv:2404.00865},<br>
-      &emsp; year={2024},<br>
-}<br>
+@article{Yang2024,  
+  &emsp;&emsp;author = {Ziduo Yang and Yi-Ming Zhao and Xian Wang and Xiaoqing Liu and Xiuying Zhang and Yifan Li and Qiujie Lv and Calvin Yu-Chian Chen and Lei Shen},  
+  &emsp;&emsp;title = {Scalable crystal structure relaxation using an iteration-free deep generative model with uncertainty quantification},  
+  &emsp;&emsp;journal = {Nature Communications},  
+  &emsp;&emsp;volume = {15},  
+  &emsp;&emsp;number = {1},  
+  &emsp;&emsp;pages = {8148},  
+  &emsp;&emsp;year = {2024},  
+  &emsp;&emsp;month = {September},  
+  &emsp;&emsp;doi = {10.1038/s41467-024-52378-3},  
+  &emsp;&emsp;url = {https://doi.org/10.1038/s41467-024-52378-3},  
+  &emsp;&emsp;issn = {2041-1723}  
+}<br>  
 
 ## Acknowledgements
 Some part of code in this project were adapted from [OCP](https://github.com/Open-Catalyst-Project/ocp). We gratefully acknowledge the contributions from this source. We also acknowledge Prof. Kristian Sommer Thygesen and Peder Lyngby for their generous provision of the C2DB database, complete with both initial and final structures. 
