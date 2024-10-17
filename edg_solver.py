@@ -122,8 +122,8 @@ if __name__ == '__main__':
         cell_u = data.cell_u
         cell_r = data.cell_r
 
-        mae_cart_pos_Dummy = (cart_coords_u - cart_coords_r).abs().mean().item()
-        mae_cart_pos_DeepRelax = (pred_cart_coords - cart_coords_r).abs().mean().item()
+        mae_cart_pos_Dummy = compute_cart_mean_absolute_displacement(cart_coords_u.cpu(), cart_coords_r.cpu(), cell_r.cpu()).item()
+        mae_cart_pos_DeepRelax = compute_cart_mean_absolute_displacement(pred_cart_coords.cpu(), cart_coords_r.cpu(), cell_r.cpu()).item()
 
         mae_cell_Dummy = (cell_r - cell_u).abs().mean().item()
         mae_cell_DeepRelax = (cell_r - pred_cell).abs().mean().item()
