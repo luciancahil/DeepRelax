@@ -167,7 +167,9 @@ class TrajectoryLmdbDataset(LmdbDataset):
 
 
 def collate_fn(data_list, otf_graph=False):
+
     data_list, _ = map(list, zip(*data_list))
+
     batch = Batch.from_data_list(data_list)
 
     if not otf_graph:
@@ -184,4 +186,23 @@ def collate_fn(data_list, otf_graph=False):
 
     return batch
 
+
+
+def collate_fn_crystal(data_list, otf_graph=False):
+    data_list = [(item, "dummy") for item in data_list]
+    data_list, _ = map(list, zip(*data_list))
+    batch = Batch.from_data_list(data_list)
+
+    if not otf_graph:
+        try:
+            n_neighbors = []
+            for i, data in enumerate(data_list):
+                n_index = data.edge_index[1, :]
+                n_neighbors.append(n_index.shape[0])
+            batch.neighbors = torch.tensor(n_neighbors)
+        except (NotImplementedError, TypeError):
+            logging.warning(
+                "LMDB does not contain edge index information, set otf_graph=True"
+            )
+    return batch
 

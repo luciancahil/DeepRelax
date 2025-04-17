@@ -1,4 +1,7 @@
+"""
+python train.py --data_root ./datasets/Data_MP_XMnO/cifs_xmno --num_workers 4 --batch_size 1 --steps_per_epoch 800
 
+"""
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 import math
@@ -11,7 +14,6 @@ from lmdb_dataset import TrajectoryLmdbDataset, collate_fn
 import numpy as np
 from sklearn.metrics import mean_absolute_error
 from torch.utils.data import DataLoader
-import wandb
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import argparse
 from ema import EMAHelper
@@ -45,7 +47,11 @@ def val(model, dataloader, criterion_dist, criterion_cell, device):
             pred_dist_displace, pred_var_displace, pred_dist_relaxed, pred_var_relaxed, pred_cell = model(data)
             label_dist_displace, label_dist_relaxed, label_cell \
                                             = get_edge_dist_displace(data), get_edge_dist_relaxed(data), data.cell_r
-        
+
+            # Okay, losses follow a laplace distribution.
+            # the model predicts the mean and the B (kinda but not quite std).
+            # the dist and the var must be the same dimensions.
+            # I like it!
             loss_dist_displace = criterion_dist(pred_dist_displace, pred_var_displace, label_dist_displace)
             loss_dist_relaxed = criterion_dist(pred_dist_relaxed, pred_var_relaxed, label_dist_relaxed)
             loss_cell = criterion_cell(pred_cell, label_cell)
@@ -64,6 +70,7 @@ def val(model, dataloader, criterion_dist, criterion_cell, device):
 
             pred_cell_list.append(pred_cell.detach().cpu().numpy())
             label_cell_list.append(label_cell.detach().cpu().numpy())
+
 
     valid_loss = running_loss.get_average()
     valid_loss_dist_displace = running_loss_dist_displace.get_average()
@@ -86,6 +93,8 @@ def val(model, dataloader, criterion_dist, criterion_cell, device):
     model.train()
 
     return valid_loss, valid_loss_dist_displace, valid_loss_dist_relaxed, valid_loss_cell, valid_mae_dist_displace, valid_mae_dist_relaxed, valid_mae_cell
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -117,19 +126,20 @@ if __name__ == "__main__":
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
     valid_loader = DataLoader(valid_set, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
+    
 
     dataset = data_root.split('/')[-1]
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     log_name = f'DeepRelax_{dataset}_{timestamp}'
-    wandb.init(project="DeepRelax", 
-            group=f"{dataset}",
-            config={"train_len" : len(train_set), "valid_len" : len(valid_set)}, 
-            name=log_name,
-            id=log_name
-            )
+ 
 
-    device = torch.device('cuda:0')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DeepRelax(hidden_channels=512, num_layers=4, num_rbf=128, cutoff=30.0, num_elements=118).to(device)
+
+
+    model = nn.DataParallel(model)
+    model.to(device)
+
     ema_helper = EMAHelper(mu=0.999)
     ema_helper.register(model)
     
@@ -155,6 +165,9 @@ if __name__ == "__main__":
     num_iter = math.ceil((epochs * steps_per_epoch) / len(train_loader))
     global_step = 0
     global_epoch = 0
+
+    pytorch_total_params = sum(p.numel() for p in model.parameters())
+    print(pytorch_total_params)
 
     break_flag = False
     model.train()
@@ -192,7 +205,8 @@ if __name__ == "__main__":
             running_loss_cell.update(loss_cell.item(), label_cell.size(0)) 
             running_grad_norm.update(grad_norm.item())
 
-            if global_step % steps_per_epoch == 0:
+            print(global_step)
+            if global_step % 1 == 0:
                 global_epoch += 1
 
                 train_loss = running_loss.get_average()
@@ -230,14 +244,17 @@ if __name__ == "__main__":
                     'val/valid_mae_dist_relaxed' : valid_mae_dist_relaxed,
                     'val/valid_mae_cell' : valid_mae_cell,
                 }
-                wandb.log(log_dict)
 
+                print("Epoch: {} -- Train Loss: {} -- Train_Displace_Loss: {} -- Train_Dist_Loss: {} -- train_cell_loss: {}".format(global_epoch, train_loss, train_loss_dist_displace, train_loss_dist_relaxed, train_loss_cell))
+                print("Epoch: {} -- valid_loss: {} -- Valid_Displace_Loss: {} -- Valid_Dist_Loss: {} -- Valid_Cell_Loss: {}".format(global_epoch, valid_loss, valid_loss_dist_displace, valid_loss_dist_relaxed, valid_loss_cell))
+            
                 if valid_mae_dist_displace < running_best_mae.get_best():
                     running_best_mae.update(valid_mae_dist_displace)
                     if save_model:
-                        torch.save(ema_helper.state_dict(), os.path.join(wandb.run.dir, "model.pt"))
+                        torch.save(ema_helper.state_dict(), os.path.join("new_model", "model.pt"))
                 else:
                     count = running_best_mae.counter()
+                    # it has been ~50 epochs since we've improved.
                     if count > early_stop_epoch:
                         best_mae = running_best_mae.get_best()
                         print(f"early stop in epoch {global_epoch}")
@@ -245,4 +262,8 @@ if __name__ == "__main__":
                         break_flag = True
                         break
                     
-    wandb.finish()
+
+
+"""
+
+"""

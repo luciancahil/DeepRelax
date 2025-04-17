@@ -5,11 +5,24 @@ from scipy.special import binom
 from torch_geometric.nn.models.schnet import GaussianSmearing
 from torch_scatter import segment_coo, segment_csr
 
+# calculates the distance between an atom and every other atom IN THE CELL
+# Starts with all atoms distance from 0, then repeat.
+
 def get_edge_dist_displace(data):
     pos_u = data.pos_u
     pos_r = data.pos_r
     edge_index = data.edge_index
     mask = data.mask
+    #what? 
+    # This has got the be the strangest thing I've seen in my life.
+    # The mask has the same length as edge_index.
+    # But seems to just be true from 0 to num_atoms * (num_atoms - 1), and then false afterwards.
+    # Why would you do it like this, in both senses of the phrase.
+    # Why would you code it this way? Wouldn't it be faster to just HAVE a edge_index_displace element for each?
+    # And when when caclulating edge_dist displace, you use THAT specific number? I'm so confused.
+    # Wait, no, I got it. It's becasue that's how many edges there are in a fully connected graph.
+    # That is... wow. That is a decision.
+    # So how does the order of the edges work? I don't know anymore. I give up.
     edge_index_displace = edge_index[:, mask]
     j, i = edge_index_displace
     vecs = pos_r[j] - pos_u[i]
@@ -17,6 +30,8 @@ def get_edge_dist_displace(data):
 
     return dist_displace
 
+# calculates the distance between an atom and ALL neighbours, for each edge, then normalizes.
+# Same as calculating edge attr, really.
 def get_edge_dist_relaxed(data):
     cell_r, pos_r, cell_offsets, neighbors, edge_index = data.cell_r, data.pos_r, data.cell_offsets, data.neighbors, data.edge_index
     cell_offsets_unsqueeze = cell_offsets.unsqueeze(1).float()
@@ -24,7 +39,6 @@ def get_edge_dist_relaxed(data):
     j, i = edge_index
     vecs = (pos_r[j] + (cell_offsets_unsqueeze @ abc_unsqueeze).squeeze(1)) - pos_r[i]
     dist_relaxed = vector_norm(vecs)
-
     return dist_relaxed 
 
 def get_edge_dist_unrelaxed(data):

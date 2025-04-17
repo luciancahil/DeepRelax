@@ -1,4 +1,4 @@
-name: ocp-models
+name: ocp-models-copy
 channels:
   - pytorch
   - pyg

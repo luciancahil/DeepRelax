@@ -1,0 +1,12 @@
+datasets/*
+
+dataset/*
+
+!dataset/dummy.txt
+
+
+wandb/*
+
+!wandb/dummy.txt
+
+*.zip
