@@ -140,8 +140,12 @@ if __name__ == "__main__":
     log_name = f'DeepRelax_{dataset}_{timestamp}'
  
 
-    device = torch.device('cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DeepRelax(hidden_channels=512, num_layers=4, num_rbf=128, cutoff=30.0, num_elements=118).to(device)
+
+
+    model = nn.DataParallel(model)
+    model.to(device)
     ema_helper = EMAHelper(mu=0.999)
     ema_helper.register(model)
     

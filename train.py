@@ -1,5 +1,5 @@
 """
-python train.py --data_root ./datasets/Data_MP_XMnO/cifs_xmno --num_workers 4 --batch_size 1 --steps_per_epoch 800
+python train.py --data_root ./datasets/Data_MP_XMnO/cifs_xmno --num_workers 4 --batch_size 32 --steps_per_epoch 800 --max_atoms 20
 
 """
 import os
@@ -109,6 +109,7 @@ if __name__ == "__main__":
     parser.add_argument('--early_stop_epoch', type=int, default=50, help='steps_per_epoch')
     parser.add_argument('--save_model', type=bool, default=True)
     parser.add_argument('--transfer', type=bool, default=False)
+    parser.add_argument('--max_atoms', type=int, default=0)
 
     args = parser.parse_args()
     data_root = args.data_root
@@ -134,7 +135,7 @@ if __name__ == "__main__":
  
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = DeepRelax(hidden_channels=512, num_layers=4, num_rbf=128, cutoff=30.0, num_elements=118).to(device)
+    model = DeepRelax(hidden_channels=512, num_layers=4, num_rbf=128, cutoff=30.0, num_elements=118, max_atoms=args.max_atoms).to(device)
 
 
     model = nn.DataParallel(model)
@@ -180,9 +181,11 @@ if __name__ == "__main__":
             global_step += 1      
 
             data = data.to(device)
-            pred_dist_displace, pred_var_displace, pred_dist_relaxed, pred_var_relaxed, pred_cell = model(data)
+
             label_dist_displace, label_dist_relaxed, label_cell \
                                             = get_edge_dist_displace(data), get_edge_dist_relaxed(data), data.cell_r
+            
+            pred_dist_displace, pred_var_displace, pred_dist_relaxed, pred_var_relaxed, pred_cell = model(data, target_tensor=label_dist_displace)
         
             loss_dist_displace = criterion_dist(pred_dist_displace, pred_var_displace, label_dist_displace)
             loss_dist_relaxed = criterion_dist(pred_dist_relaxed, pred_var_relaxed, label_dist_relaxed)
@@ -205,7 +208,6 @@ if __name__ == "__main__":
             running_loss_cell.update(loss_cell.item(), label_cell.size(0)) 
             running_grad_norm.update(grad_norm.item())
 
-            print(global_step)
             if global_step % 1 == 0:
                 global_epoch += 1
 
@@ -265,5 +267,6 @@ if __name__ == "__main__":
 
 
 """
+The max number of atoms per crystal is 20.
 
 """
