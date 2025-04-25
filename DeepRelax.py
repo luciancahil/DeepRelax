@@ -245,7 +245,7 @@ class Decoder(nn.Module):
             cur_atoms = data.natoms[i]
             cur_pred_distance_index = prev_distance_displace_index + (cur_atoms * (cur_atoms - 1))
             
-            cur_distances = pred_var_displace[prev_distance_displace_index: cur_pred_distance_index]
+            cur_distances = pred_distance_displace[prev_distance_displace_index: cur_pred_distance_index]
 
             cur_tokens = torch.zeros(self.max_atoms, self.max_atoms - 1)
 
@@ -253,15 +253,29 @@ class Decoder(nn.Module):
 
             distances_as_tokens.append(cur_tokens)
 
+            prev_distance_displace_index = cur_pred_distance_index
+
         distances_as_tokens = torch.stack(distances_as_tokens, dim=0)
 
         cell_hidden = self.cell_projection_hidden(torch.reshape(pred_cell, (-1, 9)))
 
         cell_initial = self.cell_projection_initial(torch.reshape(pred_cell, (-1, 9)))
         
-        self.attn_decoder(distances_as_tokens, cell_hidden, cell_initial)
+        decoded_distance_displace = self.attn_decoder(distances_as_tokens, cell_hidden, cell_initial)[0]
 
-        return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
+        prev_distance_displace_index = 0
+        for i in range(num_samples):
+            cur_atoms = data.natoms[i]
+            
+            cur_pred_distance_index = prev_distance_displace_index + (cur_atoms * (cur_atoms - 1))
+
+            cur_distances = decoded_distance_displace[i][0:cur_atoms,0:(cur_atoms-1)].reshape(-1)
+            
+
+            prev_distance_displace_index = cur_pred_distance_index  
+
+
+        return pred_distance_displace, pred_distance_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
 
         # I'm really nervous how long this could take.
 
@@ -347,7 +361,6 @@ class AttnDecoderRNN(nn.Module):
             else:
                 # remove this top i stuff
                 # Without teacher forcing: use its own predictions as the next input
-                print(decoder_output.shape)
                 decoder_input = decoder_output
 
         decoder_outputs = torch.cat(decoder_outputs, dim=1)
@@ -499,3 +512,4 @@ class MessageUpdating(nn.Module):
 
 
 
+# Last step: Teacher forcing
