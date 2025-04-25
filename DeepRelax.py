@@ -230,15 +230,24 @@ class Decoder(nn.Module):
 
     def forward(self, data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell):
         num_samples = len(data.natoms)
-        breakpoint()
 
-        # reshape the pred_distance_displace
+        # reshape the pred_distance_displace into max_atom * max_atom - 1
+        distances_as_tokens = []
         prev_distance_displace_index = 0
         for i in range(num_samples):
             cur_atoms = data.natoms[i]
             cur_pred_distance_index = prev_distance_displace_index + (cur_atoms * (cur_atoms - 1))
             
             cur_distances = pred_var_displace[prev_distance_displace_index: cur_pred_distance_index]
+
+            cur_tokens = torch.zeros(self.max_atoms, self.max_atoms - 1)
+
+            cur_tokens[0: cur_atoms, 0:(cur_atoms - 1)] = torch.reshape(cur_distances, (cur_atoms, cur_atoms-1))
+
+            distances_as_tokens.append(cur_tokens)
+
+        distances_as_tokens = torch.stack(distances_as_tokens, dim=0)
+        breakpoint()
 
 
         return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
