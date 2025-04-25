@@ -253,7 +253,7 @@ if __name__ == "__main__":
                 if valid_mae_dist_displace < running_best_mae.get_best():
                     running_best_mae.update(valid_mae_dist_displace)
                     if save_model:
-                        torch.save(ema_helper.state_dict(), os.path.join("new_model", "model.pt"))
+                        torch.save(ema_helper.state_dict(), os.path.join("new_model_{}".format(args.max_atoms), "model.pt"))
                 else:
                     count = running_best_mae.counter()
                     # it has been ~50 epochs since we've improved.
