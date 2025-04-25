@@ -16,7 +16,8 @@ class DeepRelax(nn.Module):
         rbf: dict = {"name": "gaussian"},
         envelope: dict = {"name": "polynomial", "exponent": 5},
         num_elements=83,
-        d_model=128
+        d_model=128,
+        max_atoms=0,
     ):
         super(DeepRelax, self).__init__()
         self.hidden_channels = hidden_channels
@@ -99,6 +100,10 @@ class DeepRelax(nn.Module):
             nn.Linear(hidden_channels, 9),
         )
 
+        self.max_atoms = max_atoms
+
+        self.decoder = Decoder(max_atoms)
+
         self.inv_sqrt_2 = 1 / math.sqrt(2.0)
 
     def forward(self, data):
@@ -175,6 +180,7 @@ class DeepRelax(nn.Module):
 
         # Predict atom-wise displacements between the relaxed and unrelaxed structures 
         # The comment above is a lie.
+        # actually predicts pair-wise atomic distances. For all atoms i, predict the distance between it and all atoms j.
         mask_dispalce = data.mask
         edge_index_displace = edge_index[:, mask_dispalce]
         edge_feat_displace = edge_feat[mask_dispalce]
@@ -203,8 +209,76 @@ class DeepRelax(nn.Module):
         cell_feat = self.lin_cell(cell.view(-1, 9))
         pred_cell = self.out_cell(torch.cat([g_feat_cell, cell_feat], dim=-1)).view(-1, 3, 3) + cell
 
+
+
+        # use [(n * (n-1)).item() for n in data.natoms] to figure out which pred_distance_displace goes where.
+        # look at data .neighbors to see which edge, and by extension which pred_distance_relaxed, belongs where
+
+        # pred_cell I know belongs with
+
+        if(self.max_atoms == 0):
+            return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
+        else:
+            return self.decoder(data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell)
+
+
+
+class Decoder(nn.Module):
+    def __init__(self, max_atoms):
+        super().__init__()  # <-- this is missing!
+        self.max_atoms = max_atoms
+
+    def forward(self, data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell):
+        num_samples = len(data.natoms)
+        breakpoint()
+
+        # reshape the pred_distance_displace
+        prev_distance_displace_index = 0
+        for i in range(num_samples):
+            cur_atoms = data.natoms[i]
+            cur_pred_distance_index = prev_distance_displace_index + (cur_atoms * (cur_atoms - 1))
+            
+            cur_distances = pred_var_displace[prev_distance_displace_index: cur_pred_distance_index]
+
+
         return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
-    
+
+        # I'm really nervous how long this could take.
+
+        # I could try to have each vector in pred_distance represent all interatomic distances for a single atom.
+
+        # 20 tokens of size 19 ain't that bad.
+
+        # what do I do with pred_distance_relaxed?
+
+        # there is SO MUCH variance in the number of neighbours.
+
+        # Maybe I'll just rest up a bit?
+
+
+        # hold on. I really just need to figure out the max for both natoms and neighbours.
+
+        # Not only that, go through edge_index for each, and see wich number recieves the most edges.
+
+        # So in short, go through each graph.
+
+        # for each, find the number of atoms in the graph.
+
+        # find the atom with the most edges going towards it. Record the count, and subtract (natoms - 1).
+
+        # for both of the above, keep track of the max
+
+        # from that, figure it out.
+
+        # but for now, I am just so dead.
+
+        # also, check. The first natoms * (natoms -1 ) for both in the ground trugh should be the same? Check that
+
+
+        # another idea, just let the network peak at the cell lattice, potentially with teacher forcing.
+        pass
+
+
 class MessagePassing(nn.Module):
     def __init__(
         self,
