@@ -5,7 +5,9 @@ from torch import nn
 from torch_scatter import scatter
 from graph_utils import ScaledSiLU, AtomEmbedding, RadialBasis
 from graph_utils import cell_offsets_to_num, sinusoidal_positional_encoding, vector_norm
+import torch.nn.functional as F
 
+SOS_token = 1
 class DeepRelax(nn.Module):
     def __init__(
         self,
@@ -226,7 +228,12 @@ class DeepRelax(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, max_atoms):
         super().__init__()  # <-- this is missing!
+        max_atoms = max(5, max_atoms)
         self.max_atoms = max_atoms
+        self.attn_decoder = AttnDecoderRNN(max_atoms - 1, max_atoms-1)
+
+        self.cell_projection_hidden = nn.Linear(9, max_atoms - 1)
+        self.cell_projection_initial = nn.Linear(9, max_atoms - 1)
 
     def forward(self, data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell):
         num_samples = len(data.natoms)
@@ -247,8 +254,12 @@ class Decoder(nn.Module):
             distances_as_tokens.append(cur_tokens)
 
         distances_as_tokens = torch.stack(distances_as_tokens, dim=0)
-        breakpoint()
 
+        cell_hidden = self.cell_projection_hidden(torch.reshape(pred_cell, (-1, 9)))
+
+        cell_initial = self.cell_projection_initial(torch.reshape(pred_cell, (-1, 9)))
+        
+        self.attn_decoder(distances_as_tokens, cell_hidden, cell_initial)
 
         return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
 
@@ -287,6 +298,113 @@ class Decoder(nn.Module):
         # another idea, just let the network peak at the cell lattice, potentially with teacher forcing.
         pass
 
+
+class BahdanauAttention(nn.Module):
+    def __init__(self, hidden_size):
+        super(BahdanauAttention, self).__init__()
+        self.Wa = nn.Linear(hidden_size, hidden_size)
+        self.Ua = nn.Linear(hidden_size, hidden_size)
+        self.Va = nn.Linear(hidden_size, 1)
+
+    def forward(self, query, keys):
+        scores = self.Va(torch.tanh(self.Wa(query) + self.Ua(keys)))
+        scores = scores.squeeze(2).unsqueeze(1)
+
+        weights = F.softmax(scores, dim=-1)
+        context = torch.bmm(weights, keys)
+
+        return context, weights
+
+class AttnDecoderRNN(nn.Module):
+    def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length = 20):
+        super(AttnDecoderRNN, self).__init__()
+        self.embedding = nn.Embedding(output_size, hidden_size)
+        self.attention = BahdanauAttention(hidden_size)
+        self.gru = nn.GRU(2 * hidden_size, hidden_size, batch_first=True)
+        self.out = nn.Linear(hidden_size, output_size)
+        self.dropout = nn.Dropout(dropout_p)
+        self.max_length = max_length
+
+    # Seems like all I really have to do is come up with a way to come up with encode_hidden. Maybe an output of the
+    def forward(self, encoder_outputs, encoder_hidden, initial, is_training=False, target_tensor=None):
+        decoder_input = initial.unsqueeze(dim = 1)
+        decoder_hidden = encoder_hidden.unsqueeze(dim = 0)
+        decoder_outputs = []
+        attentions = []
+
+        for i in range(self.max_length):
+
+            decoder_hidden = decoder_hidden.contiguous()
+            decoder_output, decoder_hidden, attn_weights = self.forward_step(
+                decoder_input, decoder_hidden, encoder_outputs, isTraining = is_training
+            )
+            decoder_outputs.append(decoder_output)
+            attentions.append(attn_weights)
+
+            if target_tensor is not None:
+                # Teacher forcing: Feed the target as the next input
+                decoder_input = target_tensor[:, i].unsqueeze(1) # Teacher forcing
+            else:
+                # remove this top i stuff
+                # Without teacher forcing: use its own predictions as the next input
+                print(decoder_output.shape)
+                decoder_input = decoder_output
+
+        decoder_outputs = torch.cat(decoder_outputs, dim=1)
+        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
+        attentions = torch.cat(attentions, dim=1)
+
+        return decoder_outputs, decoder_hidden, attentions
+
+
+    def forward_step(self, input, hidden, encoder_outputs, isTraining = False):
+        query = hidden.permute(1, 0, 2)
+        context, attn_weights = self.attention(query, encoder_outputs)
+        input_gru = torch.cat((input, context), dim=2)
+
+        output, hidden = self.gru(input_gru, hidden)
+        output = self.out(output)
+
+        return output, hidden, attn_weights
+    
+
+class Variator(nn.Module):
+    def __init__(self, input_size, latent_size = 100, output_size = None):
+        super(Variator, self).__init__()
+        if(output_size == None):
+            output_size = input_size
+        self.encode_mu = nn.Linear(input_size, latent_size)
+        self.encode_log_var = nn.Linear(input_size, latent_size)
+        self.decode_layer = nn.Linear(latent_size, output_size)    
+
+    def encode(self, x):
+        log_var = self.encode_log_var(x)
+        x = self.encode_mu(x)
+        return x, log_var
+
+    def decode(self, x):
+        x = self.decode_layer(x)
+
+        return x
+
+    def reparameterize(self, x, log_var):
+        # Get standard deviation
+        std = torch.exp(log_var)
+        # Returns random numbers from a normal distribution
+        eps = torch.randn_like(std)
+        # Return sampled values
+        return eps.mul(std).add_(x)
+
+    def forward(self, x, isTraining = False):
+        mu, log_var = self.encode(x)
+
+        if(isTraining):
+            x = self.reparameterize(mu, log_var)
+            x = self.decode(x)
+        else:
+            x = self.decode(mu)
+        
+        return x, mu, log_var
 
 class MessagePassing(nn.Module):
     def __init__(
@@ -374,3 +492,10 @@ class MessageUpdating(nn.Module):
 
         return dx, dvec
 # %%
+
+
+
+
+
+
+
