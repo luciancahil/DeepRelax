@@ -108,7 +108,7 @@ class DeepRelax(nn.Module):
 
         self.inv_sqrt_2 = 1 / math.sqrt(2.0)
 
-    def forward(self, data):
+    def forward(self, data, target_tensor = None):
         # position of each atom unrelaxed
         pos = data.pos_u
 
@@ -221,7 +221,7 @@ class DeepRelax(nn.Module):
         if(self.max_atoms == 0):
             return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
         else:
-            return self.decoder(data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell)
+            return self.decoder(data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell, target_tensor = target_tensor)
 
 
 
@@ -235,17 +235,18 @@ class Decoder(nn.Module):
         self.cell_projection_hidden = nn.Linear(9, max_atoms - 1)
         self.cell_projection_initial = nn.Linear(9, max_atoms - 1)
 
-    def forward(self, data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell):
-        num_samples = len(data.natoms)
+    def get_distance_as_tokens(self, data, num_samples, distance_tensor):
+        if(distance_tensor == None):
+            return None
+        
 
-        # reshape the pred_distance_displace into max_atom * max_atom - 1
-        distances_as_tokens = []
         prev_distance_displace_index = 0
+        distances_as_tokens = []
         for i in range(num_samples):
             cur_atoms = data.natoms[i]
             cur_pred_distance_index = prev_distance_displace_index + (cur_atoms * (cur_atoms - 1))
             
-            cur_distances = pred_distance_displace[prev_distance_displace_index: cur_pred_distance_index]
+            cur_distances = distance_tensor[prev_distance_displace_index: cur_pred_distance_index]
 
             cur_tokens = torch.zeros(self.max_atoms, self.max_atoms - 1)
 
@@ -257,13 +258,27 @@ class Decoder(nn.Module):
 
         distances_as_tokens = torch.stack(distances_as_tokens, dim=0)
 
+        return distances_as_tokens
+
+    def forward(self, data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell, target_tensor=None):
+        num_samples = len(data.natoms)
+
+        # reshape the pred_distance_displace into max_atom * max_atom - 1
+        
         cell_hidden = self.cell_projection_hidden(torch.reshape(pred_cell, (-1, 9)))
 
         cell_initial = self.cell_projection_initial(torch.reshape(pred_cell, (-1, 9)))
+
+        distances_as_tokens = self.get_distance_as_tokens(data, num_samples, pred_distance_displace)
+
+        target_tensor_tokens = self.get_distance_as_tokens(data, num_samples, target_tensor)
         
-        decoded_distance_displace = self.attn_decoder(distances_as_tokens, cell_hidden, cell_initial)[0]
+        
+        decoded_distance_displace = self.attn_decoder(distances_as_tokens, cell_hidden, cell_initial, target_tensor = target_tensor_tokens)[0]
 
         prev_distance_displace_index = 0
+
+        new_pred_distances = torch.zeros_like(pred_distance_displace)
         for i in range(num_samples):
             cur_atoms = data.natoms[i]
             
@@ -271,11 +286,11 @@ class Decoder(nn.Module):
 
             cur_distances = decoded_distance_displace[i][0:cur_atoms,0:(cur_atoms-1)].reshape(-1)
             
-
+            new_pred_distances[prev_distance_displace_index:cur_pred_distance_index] = cur_distances
             prev_distance_displace_index = cur_pred_distance_index  
 
 
-        return pred_distance_displace, pred_distance_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
+        return new_pred_distances, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
 
         # I'm really nervous how long this could take.
 
