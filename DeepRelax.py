@@ -239,6 +239,7 @@ class Decoder(nn.Module):
         if(distance_tensor == None):
             return None
         
+        device = distance_tensor.device  # <- add this
 
         prev_distance_displace_index = 0
         distances_as_tokens = []
@@ -248,7 +249,7 @@ class Decoder(nn.Module):
             
             cur_distances = distance_tensor[prev_distance_displace_index: cur_pred_distance_index]
 
-            cur_tokens = torch.zeros(self.max_atoms, self.max_atoms - 1)
+            cur_tokens = torch.zeros(self.max_atoms, self.max_atoms - 1, device=device)
 
             cur_tokens[0: cur_atoms, 0:(cur_atoms - 1)] = torch.reshape(cur_distances, (cur_atoms, cur_atoms-1))
 
@@ -278,7 +279,7 @@ class Decoder(nn.Module):
 
         prev_distance_displace_index = 0
 
-        new_pred_distances = torch.zeros_like(pred_distance_displace)
+        new_pred_distances = torch.zeros_like(pred_distance_displace, device=decoded_distance_displace.device)
         for i in range(num_samples):
             cur_atoms = data.natoms[i]
             
@@ -525,6 +526,9 @@ class MessageUpdating(nn.Module):
 
 
 
+"""
 
-
-# Last step: Teacher forcing
+TODO: 
+- Combine Crystal Train and train.py
+- Turn each node's distances into a sequence. So we have 32 x 20 sequences. Lovely!
+"""

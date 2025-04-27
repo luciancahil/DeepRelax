@@ -194,7 +194,6 @@ if __name__ == "__main__":
             loss_dist_relaxed = criterion_dist(pred_dist_relaxed, pred_var_relaxed, label_dist_relaxed)
             loss_cell = criterion_cell(pred_cell, label_cell)
             loss = loss_dist_displace + loss_dist_relaxed + loss_cell
-            breakpoint()
 
             optimizer.zero_grad()
             loss.backward()
