@@ -192,7 +192,7 @@ if __name__ == "__main__":
             label_dist_displace, label_dist_relaxed, label_cell \
                                             = get_edge_dist_displace(data), get_edge_dist_relaxed(data), data.cell_r
             
-            pred_dist_displace, pred_var_displace, pred_dist_relaxed, pred_var_relaxed, pred_cell = model(data)
+            pred_dist_displace, pred_var_displace, pred_dist_relaxed, pred_var_relaxed, pred_cell = model(data, target_tensor=label_dist_displace)
         
             loss_dist_displace = criterion_dist(pred_dist_displace, pred_var_displace, label_dist_displace)
             loss_dist_relaxed = criterion_dist(pred_dist_relaxed, pred_var_relaxed, label_dist_relaxed)
