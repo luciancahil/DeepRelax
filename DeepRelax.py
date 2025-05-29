@@ -323,7 +323,7 @@ class Decoder(nn.Module):
         if(distance_tensor == None):
             return None
         
-        device = distance_tensor.device  # <- add this
+        device = distance_tensor.device
 
         prev_distance_displace_index = 0
         distances_as_tokens = []
