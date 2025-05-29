@@ -1,5 +1,6 @@
 """
 python train.py --data_root ./datasets/Data_MP_XMnO/cifs_xmno --num_workers 4 --batch_size 32 --steps_per_epoch 800 --max_atoms 20
+python train.py --data_root ./datasets/Data_MP_XMnO/cifs_xmno --num_workers 4 --batch_size 32 --steps_per_epoch 800 --max_atoms 0
 
 """
 import os

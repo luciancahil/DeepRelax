@@ -107,22 +107,42 @@ class DeepRelax(nn.Module):
 
         self.inv_sqrt_2 = 1 / math.sqrt(2.0)
 
-    def forward(self, data):
+    def forward(self, data, target_tensor = None):
+        # position of each atom unrelaxed
         pos = data.pos_u
+
+        # lattice vectors
         cell = data.cell_u
         
+        # cell_offsets = data.cell_offsets
         cell_offsets = data.cell_offsets
         edge_index = data.edge_index
 
         neighbors = data.neighbors
+
+        # which atom belongs to which batch. batch[i] = j means atom i is part of batch j.
         batch = data.batch
         z = data.x.long()
         assert z.dim() == 1 and z.dtype == torch.long
 
         j, i = edge_index
         cell_offsets_unsqueeze = cell_offsets.unsqueeze(1).float()
+
+        # okay, the first neighbours[0] will be equal to cell[0], and repeat for every element in both cell and neighbours
         abc_unsqueeze = cell.repeat_interleave(neighbors, dim=0)
+
+        # this is why nobody likes clever programmers.
+        # pos[i] creates a matrix with as many rows as i, where pos[i][N] = pos[i[N]].
+        # this tries to do some sort of modifiication.
+        # why are parenthates there? Addition is associative, and even otherwise, you'd do it like that anyways.
+        # Okay, so the way this works is by finding the vector from atom 1 to atom 2. 
+        # oh, my god. This is literally just the vector between two atoms in an edge!
+        # that multiplication stuff is just meant to account for cell differences!
+
+        # why would you make that so complicated?
         vecs = (pos[j] + (cell_offsets_unsqueeze @ abc_unsqueeze).squeeze(1)) - pos[i]
+        
+        # calculates the length of the vector, and divide, so that all edge_vectors are normalized (magnitude 1)
         edge_dist = vector_norm(vecs, dim=-1)
         edge_vector = -vecs/edge_dist.unsqueeze(-1)
 
@@ -132,8 +152,11 @@ class DeepRelax(nn.Module):
         edge_feat = torch.cat([edge_rbf, cof_emb], dim=-1)
 
         x = self.atom_emb(z)
+
+        # I don't quite know what this means? 
+        # It's a 3D tensor, With dimesions as x but with a 3 squeezed in there for some reason.
         vec = torch.zeros(x.size(0), 3, x.size(1), device=x.device)
- 
+        
         #### Interaction blocks ###############################################
 
         for i in range(self.num_layers):
@@ -148,8 +171,17 @@ class DeepRelax(nn.Module):
             dx, dvec = self.update_layers[i](x, vec)
             x = x + dx
             vec = vec + dvec
+        # Okay, If I want to figure out why and how this works, I don't know. 
+
+        # I really need to figure out information that gets spat out.
+
+        # Maybe it's just dvec and dx?
+
+        # No. vec doesn't appear, X does.
 
         # Predict atom-wise displacements between the relaxed and unrelaxed structures 
+        # The comment above is a lie.
+        # actually predicts pair-wise atomic distances. For all atoms i, predict the distance between it and all atoms j.
         mask_dispalce = data.mask
         edge_index_displace = edge_index[:, mask_dispalce]
         edge_feat_displace = edge_feat[mask_dispalce]
@@ -162,6 +194,8 @@ class DeepRelax(nn.Module):
         pred_distance_displace, pred_var_displace = torch.relu(pred_distance_displace).squeeze(-1), pred_var_displace.squeeze()
 
         # Predict pair-wise distances within the relaxed structure
+
+        # Well, I guess that makes sense. It knows where the changes are because the edge_feat matrix is fed to it. I like this.
         edge_feat_relaxed = self.lin_edge_relaxed(edge_feat)
         j, i = edge_index
         x_dist_relaxed = self.dist_relaxed_branch(x)
@@ -176,7 +210,17 @@ class DeepRelax(nn.Module):
         cell_feat = self.lin_cell(cell.view(-1, 9))
         pred_cell = self.out_cell(torch.cat([g_feat_cell, cell_feat], dim=-1)).view(-1, 3, 3) + cell
 
-        return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
+
+
+        # use [(n * (n-1)).item() for n in data.natoms] to figure out which pred_distance_displace goes where.
+        # look at data .neighbors to see which edge, and by extension which pred_distance_relaxed, belongs where
+
+        # pred_cell I know belongs with
+
+        if(self.max_atoms == 0):
+            return pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
+        else:
+            return self.decoder(data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell, target_tensor = target_tensor)
     
 class MessagePassing(nn.Module):
     def __init__(
