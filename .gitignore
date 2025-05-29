@@ -10,3 +10,6 @@ wandb/*
 !wandb/dummy.txt
 
 *.zip
+
+
+*.pt

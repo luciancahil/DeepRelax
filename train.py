@@ -121,6 +121,12 @@ if __name__ == "__main__":
     early_stop_epoch = args.early_stop_epoch
     save_model = args.save_model
     transfer = args.transfer 
+    file_path = os.path.join(".", "new_model_{}".format(args.max_atoms), "model.pt")
+
+
+    os.makedirs(file_path, exist_ok = True)
+
+
 
     train_set = TrajectoryLmdbDataset({"src": os.path.join(data_root, 'train_DeepRelax')})
     valid_set = TrajectoryLmdbDataset({"src": os.path.join(data_root, 'val_DeepRelax')})
@@ -135,7 +141,7 @@ if __name__ == "__main__":
  
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = DeepRelax(hidden_channels=512, num_layers=4, num_rbf=128, cutoff=30.0, num_elements=118, max_atoms=args.max_atoms).to(device)
+    model = DeepRelax(hidden_channels=512, num_layers=4, num_rbf=128, cutoff=30.0, num_elements=118).to(device)
 
 
     model = nn.DataParallel(model)
@@ -185,7 +191,7 @@ if __name__ == "__main__":
             label_dist_displace, label_dist_relaxed, label_cell \
                                             = get_edge_dist_displace(data), get_edge_dist_relaxed(data), data.cell_r
             
-            pred_dist_displace, pred_var_displace, pred_dist_relaxed, pred_var_relaxed, pred_cell = model(data, target_tensor=label_dist_displace)
+            pred_dist_displace, pred_var_displace, pred_dist_relaxed, pred_var_relaxed, pred_cell = model(data)
         
             loss_dist_displace = criterion_dist(pred_dist_displace, pred_var_displace, label_dist_displace)
             loss_dist_relaxed = criterion_dist(pred_dist_relaxed, pred_var_relaxed, label_dist_relaxed)
@@ -253,7 +259,7 @@ if __name__ == "__main__":
                 if valid_mae_dist_displace < running_best_mae.get_best():
                     running_best_mae.update(valid_mae_dist_displace)
                     if save_model:
-                        torch.save(ema_helper.state_dict(), os.path.join("new_model_{}".format(args.max_atoms), "model.pt"))
+                        torch.save(ema_helper.state_dict(), "{}_model.pt".format(args.max_atoms))
                 else:
                     count = running_best_mae.counter()
                     # it has been ~50 epochs since we've improved.
