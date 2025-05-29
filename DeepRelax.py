@@ -5,6 +5,7 @@ from torch import nn
 from torch_scatter import scatter
 from graph_utils import ScaledSiLU, AtomEmbedding, RadialBasis
 from graph_utils import cell_offsets_to_num, sinusoidal_positional_encoding, vector_norm
+import torch.nn.functional as F
 
 class DeepRelax(nn.Module):
     def __init__(
@@ -16,7 +17,8 @@ class DeepRelax(nn.Module):
         rbf: dict = {"name": "gaussian"},
         envelope: dict = {"name": "polynomial", "exponent": 5},
         num_elements=83,
-        d_model=128
+        d_model=128,
+        max_atoms=0,
     ):
         super(DeepRelax, self).__init__()
         self.hidden_channels = hidden_channels
@@ -98,6 +100,10 @@ class DeepRelax(nn.Module):
             ScaledSiLU(),
             nn.Linear(hidden_channels, 9),
         )
+
+        self.max_atoms = max_atoms
+
+        self.decoder = Decoder(max_atoms)
 
         self.inv_sqrt_2 = 1 / math.sqrt(2.0)
 
@@ -257,4 +263,177 @@ class MessageUpdating(nn.Module):
         dvec = xvec3.unsqueeze(1) * vec1
 
         return dx, dvec
+
+
+class Decoder(nn.Module):
+    def __init__(self, max_atoms):
+        super().__init__()  # <-- this is missing!
+        max_atoms = max(5, max_atoms)
+        self.max_atoms = max_atoms
+        self.attn_decoder = AttnDecoderRNN(max_atoms - 1, max_atoms-1)
+
+        self.cell_projection_hidden = nn.Linear(9, max_atoms - 1)
+        self.cell_projection_initial = nn.Linear(9, max_atoms - 1)
+
+    def get_distance_as_tokens(self, data, num_samples, distance_tensor):
+        if(distance_tensor == None):
+            return None
+        
+        device = distance_tensor.device  # <- add this
+
+        prev_distance_displace_index = 0
+        distances_as_tokens = []
+        for i in range(num_samples):
+            cur_atoms = data.natoms[i]
+            cur_pred_distance_index = prev_distance_displace_index + (cur_atoms * (cur_atoms - 1))
+            
+            cur_distances = distance_tensor[prev_distance_displace_index: cur_pred_distance_index]
+
+            cur_tokens = torch.zeros(self.max_atoms, self.max_atoms - 1, device=device)
+
+            cur_tokens[0: cur_atoms, 0:(cur_atoms - 1)] = torch.reshape(cur_distances, (cur_atoms, cur_atoms-1))
+
+            distances_as_tokens.append(cur_tokens)
+
+            prev_distance_displace_index = cur_pred_distance_index
+
+        distances_as_tokens = torch.stack(distances_as_tokens, dim=0)
+
+        return distances_as_tokens
+
+    def forward(self, data, pred_distance_displace, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell, target_tensor=None):
+        num_samples = len(data.natoms)
+
+        # reshape the pred_distance_displace into max_atom * max_atom - 1
+        
+        cell_hidden = self.cell_projection_hidden(torch.reshape(pred_cell, (-1, 9)))
+
+        cell_initial = self.cell_projection_initial(torch.reshape(pred_cell, (-1, 9)))
+
+        distances_as_tokens = self.get_distance_as_tokens(data, num_samples, pred_distance_displace)
+
+        target_tensor_tokens = self.get_distance_as_tokens(data, num_samples, target_tensor)
+        
+        
+        decoded_distance_displace = self.attn_decoder(distances_as_tokens, cell_hidden, cell_initial, target_tensor = target_tensor_tokens)[0]
+
+        prev_distance_displace_index = 0
+
+        new_pred_distances = torch.zeros_like(pred_distance_displace, device=decoded_distance_displace.device)
+        for i in range(num_samples):
+            cur_atoms = data.natoms[i]
+            
+            cur_pred_distance_index = prev_distance_displace_index + (cur_atoms * (cur_atoms - 1))
+
+            cur_distances = decoded_distance_displace[i][0:cur_atoms,0:(cur_atoms-1)].reshape(-1)
+            
+            new_pred_distances[prev_distance_displace_index:cur_pred_distance_index] = cur_distances
+            prev_distance_displace_index = cur_pred_distance_index  
+
+
+        return new_pred_distances, pred_var_displace, pred_distance_relaxed, pred_var_relaxed, pred_cell
+
+        # I'm really nervous how long this could take.
+
+        # I could try to have each vector in pred_distance represent all interatomic distances for a single atom.
+
+        # 20 tokens of size 19 ain't that bad.
+
+        # what do I do with pred_distance_relaxed?
+
+        # there is SO MUCH variance in the number of neighbours.
+
+        # Maybe I'll just rest up a bit?
+
+
+        # hold on. I really just need to figure out the max for both natoms and neighbours.
+
+        # Not only that, go through edge_index for each, and see wich number recieves the most edges.
+
+        # So in short, go through each graph.
+
+        # for each, find the number of atoms in the graph.
+
+        # find the atom with the most edges going towards it. Record the count, and subtract (natoms - 1).
+
+        # for both of the above, keep track of the max
+
+        # from that, figure it out.
+
+        # but for now, I am just so dead.
+
+        # also, check. The first natoms * (natoms -1 ) for both in the ground trugh should be the same? Check that
+
+
+        # another idea, just let the network peak at the cell lattice, potentially with teacher forcing.
+        pass
+
+
+class BahdanauAttention(nn.Module):
+    def __init__(self, hidden_size):
+        super(BahdanauAttention, self).__init__()
+        self.Wa = nn.Linear(hidden_size, hidden_size)
+        self.Ua = nn.Linear(hidden_size, hidden_size)
+        self.Va = nn.Linear(hidden_size, 1)
+
+    def forward(self, query, keys):
+        scores = self.Va(torch.tanh(self.Wa(query) + self.Ua(keys)))
+        scores = scores.squeeze(2).unsqueeze(1)
+
+        weights = F.softmax(scores, dim=-1)
+        context = torch.bmm(weights, keys)
+
+        return context, weights
+
+class AttnDecoderRNN(nn.Module):
+    def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length = 20):
+        super(AttnDecoderRNN, self).__init__()
+        self.embedding = nn.Embedding(output_size, hidden_size)
+        self.attention = BahdanauAttention(hidden_size)
+        self.gru = nn.GRU(2 * hidden_size, hidden_size, batch_first=True)
+        self.out = nn.Linear(hidden_size, output_size)
+        self.dropout = nn.Dropout(dropout_p)
+        self.max_length = max_length
+
+    # Seems like all I really have to do is come up with a way to come up with encode_hidden. Maybe an output of the
+    def forward(self, encoder_outputs, encoder_hidden, initial, is_training=False, target_tensor=None):
+        decoder_input = initial.unsqueeze(dim = 1)
+        decoder_hidden = encoder_hidden.unsqueeze(dim = 0)
+        decoder_outputs = []
+        attentions = []
+
+        for i in range(self.max_length):
+
+            decoder_hidden = decoder_hidden.contiguous()
+            decoder_output, decoder_hidden, attn_weights = self.forward_step(
+                decoder_input, decoder_hidden, encoder_outputs, isTraining = is_training
+            )
+            decoder_outputs.append(decoder_output)
+            attentions.append(attn_weights)
+
+            if target_tensor is not None:
+                # Teacher forcing: Feed the target as the next input
+                decoder_input = target_tensor[:, i].unsqueeze(1) # Teacher forcing
+            else:
+                # remove this top i stuff
+                # Without teacher forcing: use its own predictions as the next input
+                decoder_input = decoder_output
+
+        decoder_outputs = torch.cat(decoder_outputs, dim=1)
+        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
+        attentions = torch.cat(attentions, dim=1)
+
+        return decoder_outputs, decoder_hidden, attentions
+
+
+    def forward_step(self, input, hidden, encoder_outputs, isTraining = False):
+        query = hidden.permute(1, 0, 2)
+        context, attn_weights = self.attention(query, encoder_outputs)
+        input_gru = torch.cat((input, context), dim=2)
+
+        output, hidden = self.gru(input_gru, hidden)
+        output = self.out(output)
+
+        return output, hidden, attn_weights
+
 # %%
